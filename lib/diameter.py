@@ -1687,6 +1687,7 @@ class Diameter:
         avp += self.generate_avp(260, 40, "000001024000000c" + format(int(16777238),"x").zfill(8) +  "0000010a4000000c000028af")      #Vendor-Specific-Application-ID (Gx)
         avp += self.generate_avp(258, 40, format(int(16777238),"x").zfill(8))                            #Auth-Application-ID - Diameter Gx
         avp += self.generate_avp(258, 40, format(int(10),"x").zfill(8))                                  #Auth-Application-ID - Diameter CER
+        avp += self.generate_avp(258, 40, format(int(16777236),"x").zfill(8))                            #Auth-Application-ID - Diameter Rx
         avp += self.generate_avp(265, 40, format(int(5535),"x").zfill(8))                                #Supported-Vendor-ID (3GGP v2)
         avp += self.generate_avp(265, 40, format(int(10415),"x").zfill(8))                               #Supported-Vendor-ID (3GPP)
         avp += self.generate_avp(265, 40, format(int(13019),"x").zfill(8))                               #Supported-Vendor-ID 13019 (ETSI)
@@ -3425,6 +3426,7 @@ class Diameter:
             remoteServingApn = None
             servingApn = None
             ipServingApn = None
+            subscriberId = None
             try:
                 serviceUrn = bytes.fromhex(self.get_avp_data(avps, 525)[0]).decode('ascii')
             except:
@@ -3570,12 +3572,16 @@ class Diameter:
                     self.logTool.log(service='HSS', level='info', message=f"[diameter.py] [Answer_16777236_265] [AAA] not imsEnabled on Subscriber or is emergencySubscriber", redisClient=self.redisMessaging)
 
 
-
                 try:
                     mediaType = self.get_avp_data(avps, 520)[0]
+                    if int(mediaType, 16) == 4:
+                        timeout = int(self.get_avp_data(avps, 27))
+                        self.logTool.log(service='HSS', level='info', message=f"[diameter.py] [Answer_16777236_265] [AAA] Media Type is Control, setting timeout to {timeout}", redisClient=self.redisMessaging)
+                        self.database.Add_AF_Subscription(subscriber_id=subscriberId, imsi=imsi, apn_id=apnId, af_session_id=aarSessionID, af_peer=aarOriginHost, af_realm=aarOriginRealm, timeout=timeout)
+
                     # In order to send a Gx RAR, we need to ensure that mediaType is AUDIO(0) or VIDEO(1)
                     valid_media_types = [0, 1]
-                    if int(mediaType, 16) not in valid_media_types:
+                    if int(mediaType, 16) not in valid_media_types and int(mediaType, 16) != 4:
                         self.logTool.log(service='HSS', level='error', message=f"[diameter.py] [Answer_16777236_265] [AAA] Media type with value {mediaType} is incorrect - Is not AUDIO or VIDEO or CONTROL", redisClient=self.redisMessaging)
                     assert(int(mediaType, 16) in valid_media_types)
                     # At this point, we know the AAR is indicating a call setup, so we'll get the serving pgw information, then send a 
@@ -3946,33 +3952,36 @@ class Diameter:
                 subscriber = self.database.Get_Subscriber(imsi=imsi)
                 subscriberId = subscriber.get('subscriber_id', None)
                 apnId = (self.database.Get_APN_by_Name(apn="ims")).get('apn_id', None)
-                servingApn = self.database.Get_Serving_APN(subscriber_id=subscriberId, apn_id=apnId)
-                try:
-                    if not servingApn or servingApn == None or servingApn == 'None':
-                        #If we didn't find a serving APN for the Subscriber, try the other local HSS'.
-                        localGeoredEndpoints = self.config.get('geored', {}).get('local_endpoints', [])
-                        for localGeoredEndpoint in localGeoredEndpoints:
-                            endpointUrl = f"{localGeoredEndpoint}/pcrf/pcrf_subscriber_imsi/{imsi}"
-                            self.logTool.log(service='HSS', level='debug', message=f"[diameter.py] [Answer_16777236_275] [STA] Searching remote HSS for serving apn: {endpointUrl}", redisClient=self.redisMessaging)
-                            response = requests.get(url=endpointUrl, timeout=1)
-                            responseJson = response.json()
-                            if not responseJson:
-                                continue
-                            self.logTool.log(service='HSS', level='debug', message=f"[diameter.py] [Answer_16777236_275] [STA] Recieved response from remote HSS: {responseJson}", redisClient=self.redisMessaging)
-                            remoteServingApn = responseJson
-                            servingImsApn = remoteServingApn.get('apns', {}).get('ims', {})
-                            if servingImsApn:
-                                servingApn = servingImsApn
-                except:
-                    self.logTool.log(service='HSS', level='warning', message=f"[diameter.py] [Answer_16777236_275] [STA] Error Searching remote HSS for serving apn: {traceback.format_exc()}", redisClient=self.redisMessaging)
-                if servingApn is not None:
-                    servingPgw = servingApn.get('serving_pgw', '')
-                    servingPgwRealm = servingApn.get('serving_pgw_realm', '')
-                    servingPgwPeer = servingApn.get('serving_pgw_peer', '').split(';')[0]
-                    pcrfSessionId = servingApn.get('pcrf_session_id', None)
+                if self.database.Rem_AF_Subscription(subscriber_id=subscriberId, imsi=imsi, apn_id=apnId, af_session_id=sessionId):
+                    self.logTool.log(service='HSS', level='debug', message=f"[diameter.py] [Answer_16777236_275] [STA] Removed AF Subscription for subscriber: {subscriberId}", redisClient=self.redisMessaging)
                 else:
-                    self.logTool.log(service='HSS', level='debug', message=f"[diameter.py] [Answer_16777236_275] [STA] No servingApn defined for IMS Subscriber", redisClient=self.redisMessaging)
-                self.database.Update_Proxy_CSCF(imsi=imsi, proxy_cscf=pcscf, pcscf_realm=pcscf_realm, pcscf_peer=pcscf_peer, pcscf_active_session=None)
+                    servingApn = self.database.Get_Serving_APN(subscriber_id=subscriberId, apn_id=apnId)
+                    try:
+                        if not servingApn or servingApn == None or servingApn == 'None':
+                            #If we didn't find a serving APN for the Subscriber, try the other local HSS'.
+                            localGeoredEndpoints = self.config.get('geored', {}).get('local_endpoints', [])
+                            for localGeoredEndpoint in localGeoredEndpoints:
+                                endpointUrl = f"{localGeoredEndpoint}/pcrf/pcrf_subscriber_imsi/{imsi}"
+                                self.logTool.log(service='HSS', level='debug', message=f"[diameter.py] [Answer_16777236_275] [STA] Searching remote HSS for serving apn: {endpointUrl}", redisClient=self.redisMessaging)
+                                response = requests.get(url=endpointUrl, timeout=1)
+                                responseJson = response.json()
+                                if not responseJson:
+                                    continue
+                                self.logTool.log(service='HSS', level='debug', message=f"[diameter.py] [Answer_16777236_275] [STA] Recieved response from remote HSS: {responseJson}", redisClient=self.redisMessaging)
+                                remoteServingApn = responseJson
+                                servingImsApn = remoteServingApn.get('apns', {}).get('ims', {})
+                                if servingImsApn:
+                                    servingApn = servingImsApn
+                    except:
+                        self.logTool.log(service='HSS', level='warning', message=f"[diameter.py] [Answer_16777236_275] [STA] Error Searching remote HSS for serving apn: {traceback.format_exc()}", redisClient=self.redisMessaging)
+                    if servingApn is not None:
+                        servingPgw = servingApn.get('serving_pgw', '')
+                        servingPgwRealm = servingApn.get('serving_pgw_realm', '')
+                        servingPgwPeer = servingApn.get('serving_pgw_peer', '').split(';')[0]
+                        pcrfSessionId = servingApn.get('pcrf_session_id', None)
+                    else:
+                        self.logTool.log(service='HSS', level='debug', message=f"[diameter.py] [Answer_16777236_275] [STA] No servingApn defined for IMS Subscriber", redisClient=self.redisMessaging)
+                    self.database.Update_Proxy_CSCF(imsi=imsi, proxy_cscf=pcscf, pcscf_realm=pcscf_realm, pcscf_peer=pcscf_peer, pcscf_active_session=None)
             except Exception as e:
                 pass
 
@@ -4028,8 +4037,7 @@ class Diameter:
 
             else:
                 self.logTool.log(service='HSS', level='info', message=f"[diameter.py] [Answer_16777236_275] [STA] Unable to find serving APN for RAR, returning Result-Code 2001", redisClient=self.redisMessaging)
-
-            avp += self.generate_avp(268, 40, self.int_to_hex(2001, 4))
+                avp += self.generate_avp(268, 40, self.int_to_hex(2001, 4))
             response = self.generate_diameter_packet("01", "40", 275, 16777236, packet_vars['hop-by-hop-identifier'], packet_vars['end-to-end-identifier'], avp)     #Generate Diameter packet
             return response
         except Exception as e:
