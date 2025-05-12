@@ -3498,6 +3498,7 @@ class Diameter:
                     imsSubscriberDetails = self.database.Get_IMS_Subscriber(imsi=subscriberIdentifier)
                     identifier = 'imsi'
                     imsi = imsSubscriberDetails.get('imsi', None)
+                    subscriberId = subscriberDetails.get('subscriber_id', None)
                 except Exception as e:
                     pass
                 try:
@@ -3505,6 +3506,7 @@ class Diameter:
                     imsSubscriberDetails = self.database.Get_IMS_Subscriber(msisdn=subscriberIdentifier)
                     identifier = 'msisdn'
                     msisdn = imsSubscriberDetails.get('msisdn', None)
+                    subscriberId = subscriberDetails.get('subscriber_id', None)
                 except Exception as e:
                     pass
                 if identifier == None:
@@ -3514,7 +3516,7 @@ class Diameter:
                         subscriberId = ue.get('subscriber_id', None)
                         subscriberDetails = self.database.Get_Subscriber(subscriber_id=subscriberId)
                         imsi = subscriberDetails.get('imsi', None)
-                        self.logTool.log(service='HSS', level='debug', message=f"[diameter.py] [Answer_16777236_265] [AAA] Found IMSI {imsi} by IP: {ueIP}", redisClient=self.redisMessaging)
+                        self.logTool.log(service='HSS', level='debug', message=f"[diameter.py] [Answer_16777236_265] [AAA] Found IMSI {imsi} (Subscriber {subscriberId}) by IP: {ueIP}", redisClient=self.redisMessaging)
                     except Exception as e:
                         pass
             else:
@@ -3526,11 +3528,11 @@ class Diameter:
                     subscriberId = ue.get('subscriber_id', None)
                     subscriberDetails = self.database.Get_Subscriber(subscriber_id=subscriberId)
                     imsi = subscriberDetails.get('imsi', None)
-                    self.logTool.log(service='HSS', level='debug', message=f"[diameter.py] [Answer_16777236_265] [AAA] Found IMSI {imsi} by IP: {ueIP}", redisClient=self.redisMessaging)
+                    self.logTool.log(service='HSS', level='debug', message=f"[diameter.py] [Answer_16777236_265] [AAA] Found IMSI {imsi} (Subscriber {subscriberId}) by IP: {ueIP}", redisClient=self.redisMessaging)
                 except Exception as e:
                     pass
 
-            self.logTool.log(service='HSS', level='debug', message=f"[diameter.py] [Answer_16777236_265] [AAA] IMSI: {imsi} / MSISDN: {msisdn}", redisClient=self.redisMessaging)
+            self.logTool.log(service='HSS', level='debug', message=f"[diameter.py] [Answer_16777236_265] [AAA] IMSI: {imsi} (Subscriber {subscriberId}) / MSISDN: {msisdn}", redisClient=self.redisMessaging)
             imsEnabled = self.validateImsSubscriber(imsi=imsi, msisdn=msisdn)
 
             if imsEnabled or emergencySubscriber:
@@ -3575,14 +3577,23 @@ class Diameter:
                 try:
                     mediaType = self.get_avp_data(avps, 520)[0]
                     if int(mediaType, 16) == 4:
-                        timeout = int(self.get_avp_data(avps, 27))
-                        self.logTool.log(service='HSS', level='info', message=f"[diameter.py] [Answer_16777236_265] [AAA] Media Type is Control, setting timeout to {timeout}", redisClient=self.redisMessaging)
-                        self.database.Add_AF_Subscription(subscriber_id=subscriberId, imsi=imsi, apn_id=apnId, af_session_id=aarSessionID, af_peer=aarOriginHost, af_realm=aarOriginRealm, timeout=timeout)
+                        timeout = int(self.get_avp_data(avps, 27)[0], 16)
+                        if apnId == None:
+                            self.logTool.log(service='HSS', level='debug', message=f"[diameter.py] [Answer_16777236_265] [AAA] Getting ID for ims apn", redisClient=self.redisMessaging)
+                            apnId = (self.database.Get_APN_by_Name(apn="ims")).get('apn_id', None)
+                            self.logTool.log(service='HSS', level='debug', message=f"[diameter.py] [Answer_16777236_265] [AAA] ApnID: {apnId}", redisClient=self.redisMessaging)
+
+                        self.logTool.log(service='HSS', level='info', message=f"[diameter.py] [Answer_16777236_265] [AAA] Media Type is Control (IMSI {imsi} / SubscriberId {subscriberId} / APNid {apnId}), setting timeout to {timeout}", redisClient=self.redisMessaging)
+                        self.database.Add_AF_Subscription(subscriber_id=subscriberId, imsi=imsi, apn_id=apnId, af_session_id=aarSessionID, af_peer=aarOriginHost, af_realm=aarOriginRealm, af_session_expires=timeout)
+                        avp += self.generate_avp(268, 40, self.int_to_hex(2001, 4))
+                        response = self.generate_diameter_packet("01", "40", 265, 16777236, packet_vars['hop-by-hop-identifier'], packet_vars['end-to-end-identifier'], avp)     #Generate Diameter packet
+                        return response
+
 
                     # In order to send a Gx RAR, we need to ensure that mediaType is AUDIO(0) or VIDEO(1)
                     valid_media_types = [0, 1]
                     if int(mediaType, 16) not in valid_media_types and int(mediaType, 16) != 4:
-                        self.logTool.log(service='HSS', level='error', message=f"[diameter.py] [Answer_16777236_265] [AAA] Media type with value {mediaType} is incorrect - Is not AUDIO or VIDEO or CONTROL", redisClient=self.redisMessaging)
+                        self.logTool.log(service='HSS', level='error', message=f"[diameter.py] [Answer_16777236_265] [AAA] Media type with value {mediaType} is incorrect - Is not AUDIO or VIDEO or CONTROL", redisClient=self.redisMessaging)                        
                     assert(int(mediaType, 16) in valid_media_types)
                     # At this point, we know the AAR is indicating a call setup, so we'll get the serving pgw information, then send a 
                     # RAR to the PGW over Gx, asking it to setup the dedicated bearer.
@@ -3952,7 +3963,7 @@ class Diameter:
                 subscriber = self.database.Get_Subscriber(imsi=imsi)
                 subscriberId = subscriber.get('subscriber_id', None)
                 apnId = (self.database.Get_APN_by_Name(apn="ims")).get('apn_id', None)
-                if self.database.Rem_AF_Subscription(subscriber_id=subscriberId, imsi=imsi, apn_id=apnId, af_session_id=sessionId):
+                if self.database.Rem_AF_Subscription(imsi=imsi, subscriber_id=subscriberId, apn_id=apnId, af_session_id=sessionId):
                     self.logTool.log(service='HSS', level='debug', message=f"[diameter.py] [Answer_16777236_275] [STA] Removed AF Subscription for subscriber: {subscriberId}", redisClient=self.redisMessaging)
                 else:
                     servingApn = self.database.Get_Serving_APN(subscriber_id=subscriberId, apn_id=apnId)

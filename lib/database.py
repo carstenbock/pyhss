@@ -2064,19 +2064,21 @@ class Database:
             raise ValueError(E)
         result = result.__dict__
         result.pop('_sa_instance_state')
-        
+
+        self.logTool.log(service='Database', level='debug', message="Found matching SERVING_APN for subscriber_id " + str(subscriber_id) + " and apn_id " + str(apn_id) + ": "+str(result), redisClient=self.redisMessaging)
+
         self.safe_close(session)
         return result   
 
-    def Update_AF_Suscriptions(self, imsi, apn_id, af_subscriptions, propagate=True):
-        self.logTool.log(service='Database', level='debug', message="Updating AF Subscription for apn_id " + str(apn_id), redisClient=self.redisMessaging)
+    def Update_AF_Suscriptions(self, imsi, serving_apn_id, af_subscriptions, propagate=True):
+        self.logTool.log(service='Database', level='debug', message="Updating AF Subscription for serving_apn_id " + str(serving_apn_id), redisClient=self.redisMessaging)
         Session = sessionmaker(bind = self.engine)
         session = Session()
         try:
             json_data = {
                 'af_subscriptions' : repr(af_subscriptions)
             }
-            self.UpdateObj(SERVING_APN, json_data, apn_id, True)
+            self.UpdateObj(SERVING_APN, json_data, serving_apn_id, True)
             session.commit()
             #Sync state change with geored
             if propagate == True:
@@ -2101,10 +2103,11 @@ class Database:
     def Add_AF_Subscription(self, subscriber_id, imsi, apn_id, af_session_id, af_peer, af_realm, af_session_expires):
         self.logTool.log(service='Database', level='debug', message="Adding AF Subscription for subscriber_id " + str(subscriber_id) + " with apn_id " + str(apn_id), redisClient=self.redisMessaging)
         try:
-            af_session_expires = datetime.now() + af_session_expires
+            af_session_expires = int(datetime.datetime.timestamp(datetime.datetime.now(tz=timezone.utc))) + af_session_expires
             result = self.Get_Serving_APN(subscriber_id=subscriber_id, apn_id=apn_id)
             if result:
-                if result.af_subscriptions == None:
+                if result['af_subscriptions'] == None:
+                    self.logTool.log(service='Database', level='debug', message="No AF Subscriptions found, creating new list", redisClient=self.redisMessaging)
                     af_subscriptions = []
                     af_subscriptions.append({
                         'af_session_id': af_session_id,
@@ -2113,10 +2116,11 @@ class Database:
                         'af_session_expires': af_session_expires
                     })
                 else:
-                    af_subscriptions = literal_eval(result.af_subscriptions)
+                    self.logTool.log(service='Database', level='debug', message="AF Subscriptions found, updating list", redisClient=self.redisMessaging)
+                    af_subscriptions = literal_eval(result['af_subscriptions'])
                     found = False
                     for af_subscription in af_subscriptions:
-                        if af_subscription['af_session_expires'] < datetime.now():
+                        if af_subscription['af_session_expires'] < int(datetime.datetime.timestamp(datetime.datetime.now(tz=timezone.utc))):
                             self.logTool.log(service='Database', level='debug', message="AF Subscription expired, removing", redisClient=self.redisMessaging)
                             af_subscriptions.remove(af_subscription)
                             break
@@ -2136,15 +2140,16 @@ class Database:
                             'af_realm': af_realm,
                             'af_session_expires': af_session_expires
                         })
-                    self.Update_AF_Suscriptions(imsi=imsi, subscriber_id=subscriber_id, apn_id=apn_id, af_subscriptions=af_subscriptions)
+                self.logTool.log(service='Database', level='debug', message="AF Subscriptions: " + str(af_subscriptions), redisClient=self.redisMessaging)
+                self.Update_AF_Suscriptions(imsi=imsi, serving_apn_id=result['serving_apn_id'], af_subscriptions=af_subscriptions)
             else:
                 self.logTool.log(service='Database', level='debug', message="No matching SERVING_APN found for subscriber_id " + str(subscriber_id) + " and apn_id " + str(apn_id), redisClient=self.redisMessaging)
         except Exception as E:
             self.logTool.log(service='Database', level='debug', message=E, redisClient=self.redisMessaging)
             raise ValueError(E)
 
-    def Rem_AF_Subscription(self, subscriber_id, imsi, apn_id, af_session_id):
-        self.logTool.log(service='Database', level='debug', message="Adding AF Subscription for subscriber_id " + str(subscriber_id) + " with apn_id " + str(apn_id), redisClient=self.redisMessaging)
+    def Rem_AF_Subscription(self, imsi, subscriber_id, apn_id, af_session_id):
+        self.logTool.log(service='Database', level='debug', message="Removing AF Subscription for subscriber_id " + str(subscriber_id) + " with apn_id " + str(apn_id), redisClient=self.redisMessaging)
         result = False
 
         try:
@@ -2158,7 +2163,7 @@ class Database:
                             af_subscriptions.remove(af_subscription)
                             result = True
                             break
-                    self.Update_AF_Suscriptions(imsi=imsi, subscriber_id=subscriber_id, apn_id=apn_id, af_subscriptions=af_subscriptions)
+                    self.Update_AF_Suscriptions(imsi=imsi, serving_apn_id=result['serving_apn_id'], af_subscriptions=af_subscriptions)
         except Exception as E:
             self.logTool.log(service='Database', level='debug', message=E, redisClient=self.redisMessaging)
             raise ValueError(E)
