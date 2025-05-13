@@ -21,6 +21,7 @@ import re
 from baseModels import Peer, OutboundData
 import pydantic_core
 import xml.etree.ElementTree as ET
+from ast import literal_eval
 
 class Diameter:
 
@@ -111,6 +112,9 @@ class Diameter:
                 # S6a MME
                 {"commandCode": 317, "applicationId": 16777251, "requestMethod": self.Request_16777251_317, "failureResultCode": 5012 ,"requestAcronym": "CLR", "responseAcronym": "CLA", "requestName": "Cancel Location Request", "responseName": "Cancel Location Answer"},
                 {"commandCode": 319, "applicationId": 16777251, "requestMethod": self.Request_16777251_319, "failureResultCode": 5012 ,"requestAcronym": "ISD", "responseAcronym": "ISA", "requestName": "Insert Subscriber Data Request", "responseName": "Insert Subscriber Data Answer"},
+
+                # Rx PCEF/P-CSCF
+                {"commandCode": 274, "applicationId": 16777236, "requestMethod": self.Request_16777236_274, "failureResultCode": 5012 ,"requestAcronym": "ASR", "responseAcronym": "ASA", "requestName": "Abort Session Request", "responseName": "Abort Session Answer"},
         ]
 
     #Generates rounding for calculating padding
@@ -2321,6 +2325,50 @@ class Diameter:
         self.logTool.log(service='HSS', level='debug', message="Successfully Generated NOA", redisClient=self.redisMessaging)
         return response
 
+    # Upon receipt of CCR-Type 3 (Termination), lookup AF Subscriptions and send according Rx-STR-Requests to the Subscriber 
+    def GxCCR3_to_RxSTR(self, imsi, apn):
+        self.logTool.log(service='HSS', level='debug', message=f"[diameter.py] [GxCCR3_to_RxSTR] [CCA] Attempting to find APN in CCR", redisClient=self.redisMessaging)
+        self.logTool.log(service='HSS', level='debug', message=f"[diameter.py] [GxCCR3_to_RxSTR] [CCA] CCR for APN " + str(apn), redisClient=self.redisMessaging)
+        self.logTool.log(service='HSS', level='debug', message=f"[diameter.py] [GxCCR3_to_RxSTR] [CCA] Got local IMSI: {imsi}", redisClient=self.redisMessaging)
+        subscriberDetails = self.database.Get_Subscriber(imsi=imsi)
+        if not subscriberDetails:
+            self.logTool.log(service='HSS', level='debug', message=f"[diameter.py] [GxCCR3_to_RxSTR] No Subscriber found for IMSI", redisClient=self.redisMessaging)
+            return True
+        else:
+            SubscriberID = subscriberDetails['subscriber_id']
+            self.logTool.log(service='HSS', level='debug', message=f"[diameter.py] [GxCCR3_to_RxSTR] Got Subscriber ID: {SubscriberID}", redisClient=self.redisMessaging)
+
+            apnId = (self.database.Get_APN_by_Name(apn=apn)).get('apn_id', None)
+            if apnId is None:
+                self.logTool.log(service='HSS', level='debug', message=f"[diameter.py] [GxCCR3_to_RxSTR] No APN found for APN {apn}", redisClient=self.redisMessaging)
+                return True
+
+            # Get Serving APN for this subscriber / APN
+            ServingAPN = self.database.Get_Serving_APN(subscriber_id=SubscriberID, apn_id=apnId)
+            if not ServingAPN:
+                self.logTool.log(service='HSS', level='debug', message=f"[diameter.py] [GxCCR3_to_RxSTR] No Serving APN found for Subscriber ID {SubscriberID}", redisClient=self.redisMessaging)
+                return True
+            else:
+                self.logTool.log(service='HSS', level='debug', message=f"[diameter.py] [GxCCR3_to_RxSTR] Got Serving APN: {ServingAPN}", redisClient=self.redisMessaging)
+                if ServingAPN['af_subscriptions'] is None:
+                    self.logTool.log(service='HSS', level='debug', message=f"[diameter.py] [GxCCR3_to_RxSTR] No AF Subscription found for Subscriber ID {SubscriberID}", redisClient=self.redisMessaging)
+                    return True
+                else:
+                    # Send Rx-STR-Request to the AF
+                    AFSubscription = literal_eval(ServingAPN['af_subscriptions'])
+                    self.logTool.log(service='HSS', level='debug', message=f"[diameter.py] [GxCCR3_to_RxSTR] Got AF Subscription: {AFSubscription}", redisClient=self.redisMessaging)
+                    for af in AFSubscription:
+                        self.logTool.log(service='HSS', level='debug', message=f"[diameter.py] [GxCCR3_to_RxSTR] Sending Rx-STR-Request to AF {af['af_peer']}", redisClient=self.redisMessaging)
+                        self.sendDiameterRequest(
+                            requestType='ASR',
+                            hostname=af['af_peer'],
+                            peer=af['af_peer'],
+                            realm=af['af_realm'],
+                            sessionId=af['af_session_id'],
+                            abortCause=1
+                        )
+                    return True
+
     #3GPP Gx Credit Control Answer
     def Answer_16777238_272(self, packet_vars, avps):
         try:
@@ -2697,6 +2745,11 @@ class Diameter:
                     self.redisMessaging.sendMessage(queue=f'webhook', message=json.dumps(ocsNotificationBody), queueExpiry=120, usePrefix=True, prefixHostname=self.hostname, prefixServiceName='webhook')
                 except Exception as e:
                     self.logTool.log(service='HSS', level='error', message=f"[diameter.py] [Answer_16777238_272] [CCA] Failed queueing OCS notification to redis: {traceback.format_exc()}", redisClient=self.redisMessaging)
+                # Send ASR, if any AF sessions are active.
+                try:
+                    self.GxCCR3_to_RxSTR(imsi, apn)
+                except Exception as e:
+                    self.logTool.log(service='HSS', level='error', message=f"[diameter.py] [Answer_16777238_272] [CCA] Failed to send ASR for CCR-T: {traceback.format_exc()}", redisClient=self.redisMessaging)    
                 if 'ims' in apn:
                         try:
                             self.database.Update_Serving_CSCF(imsi=imsi, serving_cscf=None)
@@ -5000,4 +5053,21 @@ class Diameter:
 
 
         response = self.generate_diameter_packet("01", "c0", 324, 16777252, self.generate_id(4), self.generate_id(4), avp)     #Generate Diameter packet
+        return response
+
+    #3GPP Rx - Abort Session Request
+    def Request_16777236_274(self, peer, realm, sessionId, abortCause=0):
+        avp = ''
+        self.logTool.log(service='HSS', level='debug', message=f"[diameter.py] [Request_16777236_274] [ASR] Creating Abort Session Request", redisClient=self.redisMessaging)
+
+        avp += self.generate_avp(263, 40, str(binascii.hexlify(str.encode(sessionId)),'ascii'))          #Session-Id set AVP
+
+        avp += self.generate_avp(264, 40, self.OriginHost)                                               #Origin Host
+        avp += self.generate_avp(296, 40, self.OriginRealm)                                              #Origin Realm
+        avp += self.generate_avp(293, 40, self.string_to_hex(peer))                                               #Destination Host
+        avp += self.generate_avp(283, 40, self.string_to_hex(realm))     
+        avp += self.generate_avp(258, 40, format(int(16777236),"x").zfill(8))   #Auth-Application-ID Rx
+        avp += self.generate_vendor_avp(500, "c0", 10415, self.int_to_hex(abortCause, 4))                     #AVP Vendor ID
+        
+        response = self.generate_diameter_packet("01", "c0", 274, 16777236, self.generate_id(4), self.generate_id(4), avp)     #Generate Diameter packet
         return response
