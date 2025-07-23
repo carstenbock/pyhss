@@ -2062,6 +2062,10 @@ class Database:
             self.logTool.log(service='Database', level='debug', message=E, redisClient=self.redisMessaging)
             self.safe_close(session)
             raise ValueError(E)
+        if result is None:
+            self.logTool.log(service='Database', level='debug', message="No matching SERVING_APN found for subscriber_id " + str(subscriber_id) + " and apn_id " + str(apn_id), redisClient=self.redisMessaging)
+            self.safe_close(session)
+            return None
         result = result.__dict__
         result.pop('_sa_instance_state')
 

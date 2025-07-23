@@ -15,20 +15,27 @@ from logtool import LogTool
 
 class MetricService:
 
-    def __init__(self, redisHost: str='127.0.0.1', redisPort: int=6379):
+    def __init__(self):
         try:
             with open("../config.yaml", "r") as self.configFile:
                 self.config = yaml.safe_load(self.configFile)
         except:
             print(f"[Metric] Fatal Error - config.yaml not found, exiting.")
             quit()
-    
-        self.redisMessaging = RedisMessaging(host=redisHost, port=redisPort)
+
+
+        self.redisUseUnixSocket = self.config.get('redis', {}).get('useUnixSocket', False)
+        self.redisUnixSocketPath = self.config.get('redis', {}).get('unixSocketPath', '/var/run/redis/redis-server.sock')
+        self.redisHost = self.config.get('redis', {}).get('host', 'localhost')
+        self.redisPort = self.config.get('redis', {}).get('port', 6379)
+        self.redisMessaging = RedisMessaging(host=self.redisHost, port=self.redisPort, useUnixSocket=self.redisUseUnixSocket, unixSocketPath=self.redisUnixSocketPath)
+
         self.banners = Banners()
         self.logTool = LogTool(config=self.config)
         self.registry = CollectorRegistry(auto_describe=True)
         self.logTool.log(service='Metric', level='info', message=f"{self.banners.metricService()}", redisClient=self.redisMessaging)
         self.hostname = socket.gethostname()
+        self.prometheusPort = self.config.get('prometheus', {}).get('port', 9191)
         self.influxEnabled = self.config.get('influxdb', {}).get('enabled', None)
         self.influxDatabase = self.config.get('influxdb', {}).get('database', None)
         self.influxUser = self.config.get('influxdb', {}).get('username', None)
@@ -68,6 +75,7 @@ class MetricService:
         """
         Collects queued metrics from redis, and exposes them using prometheus_client.
         """
+        metric = None
         try:
             actions = {'inc': 'inc', 'dec': 'dec', 'set':'set'}
             prometheusTypes = {'counter': Counter, 'gauge': Gauge, 'histogram': Histogram, 'summary': Summary}
@@ -139,4 +147,4 @@ if __name__ == '__main__':
         '/metrics': make_wsgi_app(registry=metricService.registry)
     })
 
-    prometheusWebClient.run(host='0.0.0.0', port=9191)
+    prometheusWebClient.run(host='0.0.0.0', port=metricService.prometheusPort, threaded=True)
