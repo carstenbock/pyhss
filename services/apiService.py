@@ -221,6 +221,19 @@ GeoRed_model = api.model('GeoRed', {
     'emergency_subscriber_access_network_gateway_address': fields.String(description=EMERGENCY_SUBSCRIBER.access_network_gateway_address.doc),
     'emergency_subscriber_access_network_charging_address': fields.String(description=EMERGENCY_SUBSCRIBER.access_network_charging_address.doc),
     'emergency_subscriber_delete': fields.Boolean(description="Whether to delete the emergency subscriber on receipt"),
+    'serving_msc': fields.String(description=SUBSCRIBER.serving_msc.doc),
+    'serving_msc_timestamp': fields.String(description=SUBSCRIBER.serving_msc_timestamp.doc),
+    'serving_vlr': fields.String(description=SUBSCRIBER.serving_vlr.doc),
+    'serving_vlr_timestamp': fields.String(description=SUBSCRIBER.serving_vlr_timestamp.doc),
+    'serving_sgsn': fields.String(description=SUBSCRIBER.serving_sgsn.doc),
+    'serving_sgsn_timestamp': fields.String(description=SUBSCRIBER.serving_sgsn_timestamp.doc),
+    'last_seen_eci': fields.String(description=SUBSCRIBER.last_seen_eci.doc),
+    'last_seen_enodeb_id': fields.String(description=SUBSCRIBER.last_seen_enodeb_id.doc),
+    'last_seen_cell_id': fields.String(description=SUBSCRIBER.last_seen_cell_id.doc),
+    'last_seen_tac': fields.String(description=SUBSCRIBER.last_seen_tac.doc),
+    'last_seen_mcc': fields.String(description=SUBSCRIBER.last_seen_mcc.doc),
+    'last_seen_mnc': fields.String(description=SUBSCRIBER.last_seen_mnc.doc),
+    'last_location_update_timestamp': fields.String(description=SUBSCRIBER.last_location_update_timestamp.doc)
 })
 
 def no_auth_required(f):
@@ -506,7 +519,7 @@ class PyHSS_AUC_Get_AKA_Vectors(Resource):
             print("Got AuC Data OK - Generating " + str(vector_count) + " Vectors")
             
             plmn = diameterClient.EncodePLMN(mcc=config['hss']['MCC'], mnc=config['hss']['MNC'])
-            vector_dict = databaseClient.Get_Vectors_AuC(auc_data['auc_id'], action='2g3g', plmn=plmn, requested_vectors=int(vector_count))
+            vector_dict = databaseClient.Get_Vectors_AuC(auc_data['auc_id'], action='aka', plmn=plmn, requested_vectors=int(vector_count))
             print("Got Vectors: " + str(vector_dict))
             return vector_dict, 200
         except Exception as E:
@@ -1820,6 +1833,8 @@ class PyHSS_PCRF_CLR_Subscriber(Resource):
 
             imsi = jsonData.get('imsi', None)
             msisdn = jsonData.get('msisdn', None)
+            subscriberData = None
+            imsSubscriberData = None
 
             if not imsi and not msisdn:
                 result = {"Result": "Error: IMSI or MSISDN Required"}
@@ -1830,7 +1845,8 @@ class PyHSS_PCRF_CLR_Subscriber(Resource):
                 imsSubscriberData = databaseClient.Get_IMS_Subscriber(imsi=imsi)
             else:
                 imsSubscriberData = databaseClient.Get_IMS_Subscriber(msisdn=msisdn)
-                subscriberData = databaseClient.Get_Subscriber(imsi=imsSubscriberData.get('imsi', None))
+                imsi = imsSubscriberData.get('imsi', None)
+                subscriberData = databaseClient.Get_Subscriber(imsi=imsi)
             
             try:
                 servingMmePeer = subscriberData.get('serving_mme_peer').split(';')[0]
@@ -1838,7 +1854,6 @@ class PyHSS_PCRF_CLR_Subscriber(Resource):
                 result = {"Result": "Error: Subscriber is not currently served by an MME"}
                 return result, 400
             
-            imsi = imsSubscriberData.get('imsi', None)
             servingMmeRealm = subscriberData.get('serving_mme_realm', None)
             servingMme = subscriberData.get('serving_mme', None)
 
@@ -2083,6 +2098,7 @@ class PyHSS_Geored(Resource):
                                     usePrefix=True, 
                                     prefixHostname=originHostname, 
                                     prefixServiceName='metric')
+
             if 'af_subscriptions' in json_data:
                 print("Updating af_subscriptions of serving APN")
                 response_data.append(databaseClient.Update_AF_Suscriptions(
@@ -2090,11 +2106,25 @@ class PyHSS_Geored(Resource):
                     serving_apn=json_data['serving_apn'],
                     af_subscriptions=json_data['af_subscriptions'],
                     propate=False))
+
+             if 'last_seen_mcc' in json_data:
+                print("Updating Subscriber Location")
+                response_data.append(databaseClient.update_subscriber_location(imsi=str(json_data['imsi']),
+                                                                                last_seen_eci=json_data['last_seen_eci'],
+                                                                                last_seen_enodeb_id=json_data['last_seen_enodeb_id'],
+                                                                                last_seen_cell_id=json_data['last_seen_cell_id'],
+                                                                                last_seen_tac=json_data['last_seen_tac'],
+                                                                                last_seen_mcc=json_data['last_seen_mcc'],
+                                                                                last_seen_mnc=json_data['last_seen_mnc'],
+                                                                                last_location_update_timestamp=json_data['last_location_update_timestamp'],
+                                                                                propagate=False))
+
+
                 redisMessaging.sendMetric(serviceName='api', metricName='prom_flask_http_geored_endpoints',
                                     metricType='counter', metricAction='inc', 
                                     metricValue=1.0, metricHelp='Number of Geored Pushes Received',
                                     metricLabels={
-                                        "endpoint": "PCRF",
+                                        "endpoint": "HSS",
                                         "geored_host": request.remote_addr,
                                     },
                                     metricExpiry=60,
