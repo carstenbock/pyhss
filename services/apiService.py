@@ -2107,7 +2107,7 @@ class PyHSS_Geored(Resource):
                     af_subscriptions=json_data['af_subscriptions'],
                     propate=False))
 
-             if 'last_seen_mcc' in json_data:
+            if 'last_seen_mcc' in json_data:
                 print("Updating Subscriber Location")
                 response_data.append(databaseClient.update_subscriber_location(imsi=str(json_data['imsi']),
                                                                                 last_seen_eci=json_data['last_seen_eci'],
