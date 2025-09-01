@@ -90,6 +90,12 @@ hss:
   # Whether to ignore Purge UE Requests - leaving the subscriber state with the last served mme instead of null.
   ignore_purge_ue_request: False
 
+  # Whether to announce Rx + Gx in the CER requests:
+  enable_pcrf: True
+
+  # Whether to enable Gy interface:
+  enable_gy: True
+
   #S-CSCF Pool
   scscf_pool:
     - 'scscf.ims.mnc001.mcc001.3gppnetwork.org'

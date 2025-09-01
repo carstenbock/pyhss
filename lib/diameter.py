@@ -91,8 +91,8 @@ class Diameter:
                 {"commandCode": 258, "applicationId": 16777238, "responseMethod": self.Answer_16777238_258, "failureResultCode": 4100 ,"requestAcronym": "RAR", "responseAcronym": "RAA", "requestName": "Re Auth Request", "responseName": "Re Auth Answer"},
                 {"commandCode": 272, "applicationId": 16777238, "responseMethod": self.Answer_16777238_272, "failureResultCode": 5012 ,"requestAcronym": "CCR", "responseAcronym": "CCA", "requestName": "Credit Control Request", "responseName": "Credit Control Answer"},
                 # CCR is used for both Gy and Re OCS, so we have it in both lists
-                {"commandCode": 258, "applicationId": 4, "responseMethod": self.Answer_16777238_258, "failureResultCode": 4100 ,"requestAcronym": "RAR", "responseAcronym": "RAA", "requestName": "Re Auth Request", "responseName": "Re Auth Answer"},
-                {"commandCode": 272, "applicationId": 4, "responseMethod": self.Answer_16777238_272, "failureResultCode": 5012 ,"requestAcronym": "CCR", "responseAcronym": "CCA", "requestName": "Credit Control Request", "responseName": "Credit Control Answer"},
+                {"commandCode": 258, "applicationId": 4, "responseMethod": self.Answer_4_258, "failureResultCode": 4100 ,"requestAcronym": "RAR", "responseAcronym": "RAA", "requestName": "Re Auth Request", "responseName": "Re Auth Answer"},
+                {"commandCode": 272, "applicationId": 4, "responseMethod": self.Answer_4_272, "failureResultCode": 5012 ,"requestAcronym": "CCR", "responseAcronym": "CCA", "requestName": "Credit Control Request", "responseName": "Credit Control Answer"},
 
                 # S6a MME
                 {"commandCode": 318, "applicationId": 16777251, "flags": "c0", "responseMethod": self.Answer_16777251_318, "failureResultCode": 4100 ,"requestAcronym": "AIR", "responseAcronym": "AIA", "requestName": "Authentication Information Request", "responseName": "Authentication Information Answer"},
@@ -1746,14 +1746,20 @@ class Diameter:
         avp += self.generate_avp(260, 40, "000001024000000c" + format(int(16777291),"x").zfill(8) +  "0000010a4000000c000028af")      #Vendor-Specific-Application-ID (SLh)
         avp += self.generate_avp(265, 40, format(int(10415),"x").zfill(8))                               #Supported-Vendor-ID (3GPP)
         avp += self.generate_avp(260, 40, "000001024000000c" + format(int(16777217),"x").zfill(8) +  "0000010a4000000c000028af")      #Vendor-Specific-Application-ID (Sh)       
-        avp += self.generate_avp(265, 40, format(int(10415),"x").zfill(8))                               #Supported-Vendor-ID (3GPP)
-        avp += self.generate_avp(260, 40, "000001024000000c" + format(int(16777236),"x").zfill(8) +  "0000010a4000000c000028af")      #Vendor-Specific-Application-ID (Rx)
-        avp += self.generate_avp(265, 40, format(int(10415),"x").zfill(8))                               #Supported-Vendor-ID (3GPP)
-        avp += self.generate_avp(260, 40, "000001024000000c" + format(int(16777238),"x").zfill(8) +  "0000010a4000000c000028af")      #Vendor-Specific-Application-ID (Gx)
-        avp += self.generate_avp(258, 40, format(int(16777238),"x").zfill(8))                            #Auth-Application-ID - Diameter Gx
+        
+        if self.config.get('hss', {}).get('enable_pcrf', True) == True:
+            avp += self.generate_avp(265, 40, format(int(10415),"x").zfill(8))                               #Supported-Vendor-ID (3GPP)
+            avp += self.generate_avp(260, 40, "000001024000000c" + format(int(16777236),"x").zfill(8) +  "0000010a4000000c000028af")      #Vendor-Specific-Application-ID (Rx)
+            avp += self.generate_avp(265, 40, format(int(10415),"x").zfill(8))                               #Supported-Vendor-ID (3GPP)
+            avp += self.generate_avp(260, 40, "000001024000000c" + format(int(16777238),"x").zfill(8) +  "0000010a4000000c000028af")      #Vendor-Specific-Application-ID (Gx)
+            avp += self.generate_avp(258, 40, format(int(16777238),"x").zfill(8))                            #Auth-Application-ID - Diameter Gx
+
         avp += self.generate_avp(258, 40, format(int(10),"x").zfill(8))                                  #Auth-Application-ID - Diameter CER
-        avp += self.generate_avp(258, 40, format(int(16777236),"x").zfill(8))                            #Auth-Application-ID - Diameter Rx
-        avp += self.generate_avp(258, 40, format(int(4),"x").zfill(8))                                   #Auth-Application-ID - Diameter Rx
+        if self.config.get('hss', {}).get('enable_pcrf', True) == True:
+            avp += self.generate_avp(258, 40, format(int(16777238),"x").zfill(8))                            #Auth-Application-ID - Diameter Gx
+            avp += self.generate_avp(258, 40, format(int(16777236),"x").zfill(8))                            #Auth-Application-ID - Diameter Rx
+        if self.config.get('hss', {}).get('enable_gy', True) == True:
+            avp += self.generate_avp(258, 40, format(int(4),"x").zfill(8))                                   #Auth-Application-ID - Diameter Gy
         avp += self.generate_avp(265, 40, format(int(5535),"x").zfill(8))                                #Supported-Vendor-ID (3GGP v2)
         avp += self.generate_avp(265, 40, format(int(10415),"x").zfill(8))                               #Supported-Vendor-ID (3GPP)
         avp += self.generate_avp(265, 40, format(int(13019),"x").zfill(8))                               #Supported-Vendor-ID 13019 (ETSI)
@@ -2702,7 +2708,10 @@ class Diameter:
 
                 #Get UE IP            
                 try:
+                    ue_ip = self.get_avp_data(avps, 8)
+                    self.logTool.log(service='HSS', level='debug', message=f"[diameter.py] [Answer_16777238_272] [CCA] Got UE IP (hex): {ue_ip}", redisClient=self.redisMessaging)  
                     ue_ip = self.get_avp_data(avps, 8)[0]
+                    self.logTool.log(service='HSS', level='debug', message=f"[diameter.py] [Answer_16777238_272] [CCA] Got UE IP (hex): {ue_ip}", redisClient=self.redisMessaging)  
                     ue_ip = str(self.hex_to_ip(ue_ip))
                     # Fire a notification to the webhook queue, for the OCS.
                     try:
@@ -2914,6 +2923,151 @@ class Diameter:
                                             prefixServiceName='metric')
             avp += self.generate_avp(268, 40, self.int_to_hex(5030, 4))                                           #Result Code (DIAMETER ERROR - User Unknown)
             response = self.generate_diameter_packet("01", "40", 272, 16777238, packet_vars['hop-by-hop-identifier'], packet_vars['end-to-end-identifier'], avp)     #Generate Diameter packet
+        return response
+
+
+    #3GPP Gy Credit Control Answer
+    def Answer_4_272(self, packet_vars, avps):
+        imsi = "unknown"
+        avp = ''                                                                                    #Initiate empty var AVP
+        apn = ''
+        ue_ip = 'unknown'
+
+        try:
+            CC_Request_Type = self.get_avp_data(avps, 416)[0]
+            CC_Request_Number = self.get_avp_data(avps, 415)[0]
+            self.logTool.log(service='HSS', level='debug', message="[diameter.py] [Answer_4_272] [CCA] CC Request Type is " + str(int(CC_Request_Type)) + " and CC Request Number is " + str(int(CC_Request_Number)), redisClient=self.redisMessaging)
+            CC_Service_Information = self.get_avp_data(avps, 873)
+            if (CC_Service_Information):
+                self.logTool.log(service='HSS', level='debug', message="[diameter.py] [Answer_4_272] [CCA] Found CC Service Information: " + str(CC_Service_Information), redisClient=self.redisMessaging)
+                for CC_Service_Information_AVP in CC_Service_Information[0]:
+                    self.logTool.log(service='HSS', level='debug', message="[diameter.py] [Answer_4_272] [CCA] Evaluating CC Service Information AVP " + str(CC_Service_Information_AVP), redisClient=self.redisMessaging)
+                    if CC_Service_Information_AVP['avp_code'] == 30:
+                        apn = bytes.fromhex(CC_Service_Information_AVP['misc_data']).decode('utf-8')
+                        try:
+                            if '.' in apn:
+                                assert('mcc' in apn)
+                                assert('mnc' in apn)
+                                apn = apn.split('.')[0]
+                        except Exception as e:
+                            pass
+                        self.logTool.log(service='HSS', level='debug', message="[diameter.py] [Answer_4_272] [CCA] APN from CC PS Information is " + str(apn), redisClient=self.redisMessaging) 
+                    if CC_Service_Information_AVP['avp_code'] == 1227:
+                        ue_ip = bytes.fromhex(CC_Service_Information_AVP['misc_data']).decode('utf-8')
+                        self.logTool.log(service='HSS', level='debug', message="[diameter.py] [Answer_4_272] [CCA] UE IP from CC PS Information is " + str(ue_ip), redisClient=self.redisMessaging)
+
+                    if CC_Service_Information_AVP['avp_code'] == 874:
+                        CC_PS_Information = CC_Service_Information_AVP
+                        if CC_PS_Information:
+                            self.logTool.log(service='HSS', level='debug', message="[diameter.py] [Answer_4_272] [CCA] Found CC PS Information AVP: " + str(CC_PS_Information), redisClient=self.redisMessaging)    
+
+            OriginHost = self.get_avp_data(avps, 264)[0]                          #Get OriginHost from AVP
+            OriginHost = binascii.unhexlify(OriginHost).decode('utf-8')      #Format it
+
+            OriginRealm = self.get_avp_data(avps, 296)[0]                          #Get OriginRealm from AVP
+            OriginRealm = binascii.unhexlify(OriginRealm).decode('utf-8')      #Format it
+
+            try:        #Check if we have a record-route set as that's where we'll need to send the response
+                remote_peer = self.get_avp_data(avps, 282)[-1]                          #Get first record-route header
+                remote_peer = binascii.unhexlify(remote_peer).decode('utf-8')           #Format it
+            except:     #If we don't have a record-route set, we'll send the response to the OriginHost
+                remote_peer = OriginHost
+            self.logTool.log(service='HSS', level='debug', message="[diameter.py] [Answer_4_272] [CCA] Remote Peer is " + str(remote_peer), redisClient=self.redisMessaging)
+            remote_peer = remote_peer + ";" + str(self.config['hss']['OriginHost'])
+
+            session_id = self.get_avp_data(avps, 263)[0]                                                     #Get Session-ID
+            self.logTool.log(service='HSS', level='debug', message="[diameter.py] [Answer_4_272] [CCA] Session Id is " + str(binascii.unhexlify(session_id).decode()), redisClient=self.redisMessaging)
+            avp += self.generate_avp(263, 40, session_id)                                                    #Session-ID AVP set
+            avp += self.generate_avp(264, 40, self.OriginHost)                                                    #Origin Host
+            avp += self.generate_avp(296, 40, self.OriginRealm)                                                   #Origin Realm
+            avp += self.generate_avp(258, 40, "00000004")                                                    #Auth-Application-Id (3GPP Gy 4)
+            avp += self.generate_avp(416, 40, format(int(CC_Request_Type),"x").zfill(8))                     #CC-Request-Type
+            avp += self.generate_avp(415, 40, format(int(CC_Request_Number),"x").zfill(8))                   #CC-Request-Number
+
+            #Get Subscriber info from Subscription ID
+            imsi = ""
+            for SubscriptionIdentifier in self.get_avp_data(avps, 443):
+                subscription_type = -1
+                for UniqueSubscriptionIdentifier in SubscriptionIdentifier:
+                    self.logTool.log(service='HSS', level='debug', message="[diameter.py] [Answer_4_272] [CCA] Evaluating UniqueSubscriptionIdentifier AVP " + str(UniqueSubscriptionIdentifier) + " to find IMSI", redisClient=self.redisMessaging)
+                    if UniqueSubscriptionIdentifier['avp_code'] == 450:                    
+                        subscription_type = int(UniqueSubscriptionIdentifier['misc_data'])
+                        self.logTool.log(service='HSS', level='debug', message="[diameter.py] [Answer_4_272] [CCA] Subscription-Type " + str(subscription_type), redisClient=self.redisMessaging)
+                    if UniqueSubscriptionIdentifier['avp_code'] == 444:
+                        if subscription_type == 1:
+                            imsi = binascii.unhexlify(UniqueSubscriptionIdentifier['misc_data']).decode('utf-8')
+                            self.logTool.log(service='HSS', level='debug', message="[diameter.py] [Answer_4_272] [CCA] Found IMSI " + str(imsi), redisClient=self.redisMessaging)
+            self.logTool.log(service='HSS', level='debug', message="[diameter.py] [Answer_4_272] [CCA] SubscriptionID: " + str(self.get_avp_data(avps, 443)), redisClient=self.redisMessaging)
+
+            # CCR - Initial Request
+            if int(CC_Request_Type) == 1:
+                self.logTool.log(service='HSS', level='debug', message="[diameter.py] [Answer_4_272] [CCA] Request type for CCA is 1 - Initial", redisClient=self.redisMessaging)
+
+                # Fire a notification to the webhook queue, for the OCS.
+                try:
+                    ocsNotificationBody = {
+                            'notification_type': 'ocs',
+                            'timestamp': time.time_ns(),
+                            'operation': 'POST',
+                            'headers': {'Content-Type': 'application/json'},
+                            'body': {
+                            'event': 'initiate',
+                            'subscriber': {
+                            'imsi': imsi,
+                            'ue_ip': ue_ip,
+                            'apn': apn,
+                            'pcrf_session_id': binascii.unhexlify(session_id).decode(),
+                            }
+                        }
+                    }
+                    self.redisMessaging.sendMessage(queue=f'webhook', message=json.dumps(ocsNotificationBody), queueExpiry=120, usePrefix=True, prefixHostname=self.hostname, prefixServiceName='webhook')
+                except Exception as e:
+                    self.logTool.log(service='HSS', level='error', message=f"[diameter.py] [Answer_4_272] [CCA] Failed queueing OCS notification to redis: {traceback.format_exc()}", redisClient=self.redisMessaging)
+
+            # CCR - Termination Request
+            elif int(CC_Request_Type) == 3:
+                self.logTool.log(service='HSS', level='debug', message="[diameter.py] [Answer_4_272] [CCA] Request type for CCA is 3 - Termination", redisClient=self.redisMessaging)
+                try:
+                    ocsNotificationBody = {
+                            'notification_type': 'ocs',
+                            'timestamp': time.time_ns(),
+                            'operation': 'POST',
+                            'headers': {'Content-Type': 'application/json'},
+                            'body': {
+                            'event': 'terminate',
+                            'subscriber': {
+                            'imsi': imsi,
+                            'apn': apn,
+                            'pcrf_session_id': binascii.unhexlify(session_id).decode(),
+                            }
+                        }
+                    }
+                    self.redisMessaging.sendMessage(queue=f'webhook', message=json.dumps(ocsNotificationBody), queueExpiry=120, usePrefix=True, prefixHostname=self.hostname, prefixServiceName='webhook')
+                except Exception as e:
+                    self.logTool.log(service='HSS', level='error', message=f"[diameter.py] [Answer_4_272] [CCA] Failed queueing OCS notification to redis: {traceback.format_exc()}", redisClient=self.redisMessaging)
+            avp += self.generate_avp(268, 40, self.int_to_hex(2001, 4))                                           #Result Code (DIAMETER_SUCCESS (2001))
+            response = self.generate_diameter_packet("01", "40", 272, 4, packet_vars['hop-by-hop-identifier'], packet_vars['end-to-end-identifier'], avp)     #Generate Diameter packet
+        except Exception as e:                                             #Get subscriber details
+            #Handle if the subscriber is not present in HSS return "DIAMETER_ERROR_USER_UNKNOWN"
+            self.logTool.log(service='HSS', level='error', message=str(e), redisClient=self.redisMessaging)
+            self.logTool.log(service='HSS', level='error', message=e, redisClient=self.redisMessaging)
+            self.logTool.log(service='HSS', level='debug', message="[diameter.py] [Answer_4_272] [CCA] Subscriber " + str(imsi) + " unknown in HSS for CCR", redisClient=self.redisMessaging)
+
+            self.redisMessaging.sendMetric(serviceName='diameter', metricName='prom_diam_auth_event_count',
+                                            metricType='counter', metricAction='inc', 
+                                            metricValue=1.0, 
+                                            metricLabels={
+                                                        "diameter_application_id": 4,
+                                                        "diameter_cmd_code": 272,
+                                                        "event": "Unknown User",
+                                                        "imsi_prefix": str(imsi[0:6])},
+                                            metricHelp='Diameter Authentication related Counters',
+                                            metricExpiry=60,
+                                            usePrefix=True, 
+                                            prefixHostname=self.hostname, 
+                                            prefixServiceName='metric')
+            avp += self.generate_avp(268, 40, self.int_to_hex(5030, 4))                                           #Result Code (DIAMETER ERROR - User Unknown)
+            response = self.generate_diameter_packet("01", "40", 272, 4, packet_vars['hop-by-hop-identifier'], packet_vars['end-to-end-identifier'], avp)     #Generate Diameter packet
         return response
 
     #3GPP Cx User Authorization Answer
@@ -3706,6 +3860,7 @@ class Diameter:
                     self.logTool.log(service='HSS', level='debug', message=f"[diameter.py] [Answer_16777236_265] [AAA] IP Serving APN: {ipServingApn}", redisClient=self.redisMessaging)
                     ipApnName = ''
                     if ipServingApn:
+                        self.logTool.log(service='HSS', level='debug', message=f"[diameter.py] [Answer_16777236_265] [AAA] Found Serving APN for IP: {ipServingApn}", redisClient=self.redisMessaging)
                         ipApnName = self.database.Get_APN(apn_id=int(ipServingApn.get('apn', {})))
                         ipApnName = ipApnName.get('apn', None)
                     else:
@@ -3869,10 +4024,18 @@ class Diameter:
                                 servingApn = remoteServingApn
                             else:
                                 servingApn = self.database.Get_Serving_APN(subscriber_id=subscriberId, apn_id=apnId)
-                            servingPgwPeer = servingApn.get('serving_pgw_peer', None).split(';')[0]
-                            servingPgw = servingApn.get('serving_pgw', None)
-                            servingPgwRealm = servingApn.get('serving_pgw_realm', None)
-                            pcrfSessionId = servingApn.get('pcrf_session_id', None)
+                                if servingApn:
+                                    self.logTool.log(service='HSS', level='debug', message=f"[diameter.py] [Answer_16777236_265] [AAA] Found Serving APN for subscriberId: {subscriberId} and apnId: {apnId}", redisClient=self.redisMessaging)
+                                    servingPgwPeer = servingApn.get('serving_pgw_peer', None).split(';')[0]
+                                    servingPgw = servingApn.get('serving_pgw', None)
+                                    servingPgwRealm = servingApn.get('serving_pgw_realm', None)
+                                    pcrfSessionId = servingApn.get('pcrf_session_id', None)
+                                else:
+                                    servingPgwPeer = None
+                                    servingPgw = None
+                                    servingPgwRealm = None
+                                    pcrfSessionId = None
+                                    raise Exception("No Serving APN found")
 
                         if not ueIp and servingApn is not None:
                             ueIp = servingApn.get('subscriber_routing', None)
@@ -4330,10 +4493,25 @@ class Diameter:
             avp += self.generate_avp(264, 40, self.OriginHost)                                               #Origin Host
             avp += self.generate_avp(296, 40, self.OriginRealm)                                              #Origin Realm
             avp += self.generate_avp(268, 40, self.int_to_hex(2001, 4))
-            response = self.generate_diameter_packet("01", "40", 274, 16777236, packet_vars['hop-by-hop-identifier'], packet_vars['end-to-end-identifier'], avp)     #Generate Diameter packet
+            response = self.generate_diameter_packet("01", "40", 274, 16777238, packet_vars['hop-by-hop-identifier'], packet_vars['end-to-end-identifier'], avp)     #Generate Diameter packet
             return response
         except Exception as e:
-            self.logTool.log(service='HSS', level='error', message=f"[diameter.py] [Answer_16777236_274] [RAA] Error generating RAA: {traceback.format_exc()}", redisClient=self.redisMessaging)
+            self.logTool.log(service='HSS', level='error', message=f"[diameter.py] [Answer_16777238_258] [RAA] Error generating RAA: {traceback.format_exc()}", redisClient=self.redisMessaging)
+
+    # Re Auth Answer
+    def Answer_4_258(self, packet_vars, avps):
+        try:
+            avp = ''
+            session_id = self.get_avp_data(avps, 263)[0]                                                     #Get Session-ID
+            avp += self.generate_avp(263, 40, session_id)                                                    #Set session ID to received session ID
+            avp += self.generate_avp(264, 40, self.OriginHost)                                               #Origin Host
+            avp += self.generate_avp(296, 40, self.OriginRealm)                                              #Origin Realm
+            avp += self.generate_avp(268, 40, self.int_to_hex(2001, 4))
+            response = self.generate_diameter_packet("01", "40", 274, 4, packet_vars['hop-by-hop-identifier'], packet_vars['end-to-end-identifier'], avp)     #Generate Diameter packet
+            return response
+        except Exception as e:
+            self.logTool.log(service='HSS', level='error', message=f"[diameter.py] [Answer_4_258] [RAA] Error generating RAA: {traceback.format_exc()}", redisClient=self.redisMessaging)
+
 
     #3GPP S13 - ME-Identity-Check Answer
     def Answer_16777252_324(self, packet_vars, avps):
